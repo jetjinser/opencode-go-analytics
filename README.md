@@ -13,7 +13,7 @@ An inline analytics userscript for OpenCode Go usage limits. It automatically ca
 1. Make sure you have a userscript manager installed ([Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/)).
 2. Click the link below to install:
 
-**[Install Script Directly via GitHub Raw](https://raw.githubusercontent.com/jetjinser/opencode-go-analytics/main/opencode-analytics.user.js)**
+**[Install Script Directly via GitHub Raw](https://raw.githubusercontent.com/jetjinser/opencode-go-analytics/master/opencode-go-analytics.user.js)**
 
 ---
 
