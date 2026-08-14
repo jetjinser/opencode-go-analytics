@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode Go Usage Analytics
 // @namespace    https://github.com/jetjinser/opencode-go-analytics
-// @version      2.1.0
+// @version      2.2.0
 // @description  Calculates and renders Burn Rate, Budget/Pacing, and Runway metrics inline for OpenCode Go usage limits.
 // @author       Jinser Kafka <aimer@purejs.icu>
 // @match        https://opencode.ai/*
@@ -14,20 +14,21 @@
 (function () {
     'use strict';
 
-    // Cycle length definitions in fractional days
-    const CYCLE_CONFIGS = {
-        'Rolling Usage': { totalDays: 4 / 24, budgetUnit: 'hr' }, // 4 hours cycle
-        'Weekly Usage': { totalDays: 7, budgetUnit: 'd' }, // 7 days cycle
-        'Monthly Usage': { totalDays: 31, budgetUnit: 'd' } // 31 days cycle
-    };
+    // 0: Rolling (4h), 1: Weekly (7d), 2: Monthly (31d)
+    const SLOT_CONFIGS = [
+        { totalDays: 4 / 24, budgetUnit: 'hr' },
+        { totalDays: 7, budgetUnit: 'd' },
+        { totalDays: 31, budgetUnit: 'd' }
+    ];
 
     /**
      * Parses remaining time strings into fractional days.
+     * Supports both English (days, hours, mins) and Chinese (天, 小时, 分钟).
      */
     function parseRemainingDays(text) {
-        const daysMatch = text.match(/(\d+)\s*(?:days|day|d)/i);
-        const hoursMatch = text.match(/(\d+)\s*(?:hours|hour|h)/i);
-        const minsMatch = text.match(/(\d+)\s*(?:minutes|minute|mins|min|m)/i);
+        const daysMatch = text.match(/(\d+)\s*(?:days|day|d|天)/i);
+        const hoursMatch = text.match(/(\d+)\s*(?:hours|hour|h|小时)/i);
+        const minsMatch = text.match(/(\d+)\s*(?:minutes|minute|mins|min|m|分钟|分)/i);
 
         const days = daysMatch ? parseFloat(daysMatch[1]) : 0;
         const hours = hoursMatch ? parseFloat(hoursMatch[1]) : 0;
@@ -89,77 +90,70 @@
     }
 
     function injectInlineInsights() {
-        const usageItems = document.querySelectorAll('div[data-slot="usage-item"]');
+        const usageItems = document.querySelectorAll('div[data-slot="usage"] > div[data-slot="usage-item"]');
 
-        usageItems.forEach(item => {
-            const labelEl = item.querySelector('[data-slot="usage-label"]');
-            if (!labelEl) return;
+        usageItems.forEach((item, index) => {
+            const config = SLOT_CONFIGS[index];
+            if (!config) return;
 
-            const labelText = labelEl.textContent.trim();
-            const config = CYCLE_CONFIGS[labelText];
+            const valueEl = item.querySelector('[data-slot="usage-value"]');
+            const resetTimeEl = item.querySelector('[data-slot="reset-time"]');
 
-            if (config) {
-                const valueEl = item.querySelector('[data-slot="usage-value"]');
-                const resetTimeEl = item.querySelector('[data-slot="reset-time"]');
+            if (!valueEl || !resetTimeEl) return;
 
-                if (!valueEl || !resetTimeEl) return;
+            const usagePct = parseFloat(valueEl.textContent.replace('%', ''));
+            const remainingDays = parseRemainingDays(resetTimeEl.textContent);
 
-                const usagePct = parseFloat(valueEl.textContent.replace('%', ''));
-                const remainingDays = parseRemainingDays(resetTimeEl.textContent);
+            if (isNaN(usagePct) || isNaN(remainingDays)) return;
 
-                if (isNaN(usagePct) || isNaN(remainingDays)) return;
+            const metrics = calculateMetrics(usagePct, remainingDays, config);
 
-                const metrics = calculateMetrics(usagePct, remainingDays, config);
-
-                // Determine burn rate color
-                let ratioColor = '#a1a1aa'; // Neutral Gray
-                if (metrics.burnRateRatio > 1.05) {
-                    ratioColor = '#f87171'; // High Burn (Red)
-                } else if (metrics.burnRateRatio < 0.85) {
-                    ratioColor = '#4ade80'; // Low Burn (Green)
-                }
-
-                const formattedRunway = formatRunway(metrics.runwayDays);
-                const dataSignature = `${metrics.burnRateRatio}-${metrics.budgetVal}-${formattedRunway}`;
-
-                let insightsEl = item.querySelector('.custom-usage-insights');
-
-                // Return early if signature matches to prevent DOM reflows
-                if (insightsEl && insightsEl.dataset.sig === dataSignature) {
-                    return;
-                }
-
-                if (!insightsEl) {
-                    insightsEl = document.createElement('div');
-                    insightsEl.className = 'custom-usage-insights';
-                    insightsEl.style.cssText = `
-                        margin-top: 10px;
-                        padding-top: 8px;
-                        border-top: 1px dashed rgba(255, 255, 255, 0.15);
-                        display: grid;
-                        grid-template-columns: repeat(3, 1fr);
-                        gap: 8px;
-                        text-align: left;
-                    `;
-                    item.appendChild(insightsEl);
-                }
-
-                insightsEl.dataset.sig = dataSignature;
-                insightsEl.innerHTML = `
-                    <div>
-                        <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">Burn Rate</div>
-                        <div style="font-size: 13px; font-weight: 600; color: ${ratioColor};">${metrics.burnRateRatio}x</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">${metrics.budgetLabel}</div>
-                        <div style="font-size: 13px; font-weight: 600; color: #38bdf8;">${metrics.budgetVal}%/${metrics.budgetUnit}</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">Runway</div>
-                        <div style="font-size: 13px; font-weight: 600; color: #fbbf24;">${formattedRunway}</div>
-                    </div>
-                `;
+            let ratioColor = '#a1a1aa';
+            if (metrics.burnRateRatio > 1.05) {
+                ratioColor = '#f87171';
+            } else if (metrics.burnRateRatio < 0.85) {
+                ratioColor = '#4ade80';
             }
+
+            const formattedRunway = formatRunway(metrics.runwayDays);
+            const dataSignature = `${metrics.burnRateRatio}-${metrics.budgetVal}-${formattedRunway}`;
+
+            let insightsEl = item.querySelector('.custom-usage-insights');
+
+            if (insightsEl && insightsEl.dataset.sig === dataSignature) {
+                return;
+            }
+
+            if (!insightsEl) {
+                insightsEl = document.createElement('div');
+                insightsEl.className = 'custom-usage-insights';
+                insightsEl.style.cssText = `
+                    margin-top: 10px;
+                    padding-top: 8px;
+                    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 8px;
+                    text-align: left;
+                `;
+                item.appendChild(insightsEl);
+            }
+
+            insightsEl.dataset.sig = dataSignature;
+            insightsEl.innerHTML = `
+                <div>
+                    <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">Burn Rate</div>
+                    <div style="font-size: 13px; font-weight: 600; color: ${ratioColor};">${metrics.burnRateRatio}x</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">${metrics.budgetLabel}</div>
+                    <div style="font-size: 13px; font-weight: 600; color: #38bdf8;">${metrics.budgetVal}%/${metrics.budgetUnit}</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #71717a; margin-bottom: 2px;">Runway</div>
+                    <div style="font-size: 13px; font-weight: 600; color: #fbbf24;">${formattedRunway}</div>
+                </div>
+            `;
         });
     }
 
